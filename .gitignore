@@ -1,3 +1,4 @@
 data/NETFLIX/raw/*
 !data/NETFLIX/raw
 run.sh
+*.log

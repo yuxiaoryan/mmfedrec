@@ -97,5 +97,8 @@ class MFModel_light(nn.Module):
             for i_idx, i in enumerate(self.curr_item_ids):
                 self.item_hiddens[i] =  np.array(self.item_hidden_[i_idx].detach().cpu())
 
-
-        
+    def load_hiddens(self, u_hiddens, i_hiddens):
+        del self.user_hiddens
+        del self.item_hiddens
+        self.user_hiddens = u_hiddens
+        self.item_hiddens = i_hiddens

@@ -9,12 +9,12 @@ import torch
 from models.MFModel import MFModel, MFModel_light
 import random
 import torch.nn as nn
+import pickle
 # from utility.parser import parse_args
 # args = parse_args()
 path="data/NETFLIX/raw"
 import time
-
-
+from utils import load_model
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -123,19 +123,17 @@ def sample_a_batch_of_ids(batch_size:int,  id_pool:list):
 def update_model_light(model:MFModel_light, loss, learning_rate):
     global time6
     time6=time.time()
+    paras = model.get_para()
     grads = torch.autograd.grad(
-        outputs=loss, inputs= model.get_para()
+        outputs=loss, inputs= paras
     )
     global time7
     time7=time.time()
-
-    for name_and_param, grad in zip(model.named_parameters(), grads):
-        name, param = name_and_param
-        if grad is None:
-            pass
-        else:
-            # print(name, param, grad)
-            param.data.sub_(learning_rate * grad)
+    # print(grads[0])
+    for i in range(len(paras)):
+        param=paras[i]
+        # print(grads[0][i])
+        param.data.sub_(learning_rate * grads[0][i])
     model.set_hidden()
     global time8
     time8=time.time()
@@ -171,7 +169,6 @@ def calculate_loss_light(model:MFModel_light, input_user_ids:list, input_items_i
     out=model(input_user_ids, input_items_ids, mode)
     global time4
     
-    #Where time cost comes!!! 55.649s for batch_size256!
     time4=time.time()
 
 
@@ -193,14 +190,18 @@ def calculate_loss_light(model:MFModel_light, input_user_ids:list, input_items_i
 
 if __name__ == "__main__":
     hidden_dim = 8
-    total_epoch_number = 100
+    total_epoch_number = 10
     batch_size=256
-    lr=0.01
+    lr=10
+
+    model_path = "trained_models/epoch1000-lr10-hidden8.pkl"
 
     interaction_matrix, complete_item_list, complete_user_list = ensure_consistency_of_items_across_datasets()
     model = MFModel_light(complete_user_list, complete_item_list, hidden_dim).to(device)
     N = len(complete_user_list)
     M = len(complete_item_list)
+
+    # load_model(model , "trained_models/epoch1000-lr10-hidden8.pkl")
 
 
 
@@ -213,6 +214,7 @@ if __name__ == "__main__":
         time1=time.time()
         while len(user_id_pool)>0:
             input_user_ids=sample_a_batch_of_ids(batch_size,user_id_pool) 
+            # input_user_ids = [2,3,4,6,8,9]
             input_items_ids=item_id_pool
 
             time2=time.time()
@@ -220,8 +222,9 @@ if __name__ == "__main__":
             time6=time.time()
             update_model_light(model, loss, lr/M)
             
-            log_info = "Epoch: {}-{} \t{}/{} \tLoss: {:.6f}".format(epoch,"user",N-len(user_id_pool) ,N, loss.item())
-            print(log_info)
+            if len(user_id_pool)==0:
+                log_info = "Epoch: {}-{} \t{}/{} \tLoss: {:.6f}".format(epoch,"user",N-len(user_id_pool) ,N, loss.item())
+                print(log_info)
             # print("total time:{:.3f} b:{:.3f} c:{:.3f} d:{:.3f} e:{:.3f} f:{:.3f} g:{:.3f}".format(time2 -time1, time3-time2, time4-time3, time5-time4, time6-time5, time7-time6,time8-time7))
         # print("hello")
 
@@ -232,6 +235,10 @@ if __name__ == "__main__":
             input_items_ids=sample_a_batch_of_ids(batch_size,item_id_pool)
             loss=calculate_loss_light(model,input_user_ids, input_items_ids, "item", interaction_matrix)
             update_model_light(model, loss, lr/N)
-            
-            log_info = "Epoch: {}-{} \t{}/{} \tLoss: {:.6f}".format(epoch,"item",M-len(item_id_pool) ,N, loss.item())
-            print(log_info)
+            if len(item_id_pool)==0:
+                log_info = "Epoch: {}-{} \t{}/{} \tLoss: {:.6f}".format(epoch,"item",M-len(item_id_pool) ,M, loss.item())
+                print(log_info)
+        
+
+    with open(model_path, "wb") as f:
+        pickle.dump({"user":model.user_hiddens, "item": model.item_hiddens}, f)
