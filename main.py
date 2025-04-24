@@ -10,6 +10,8 @@ from models.MFModel import MFModel, MFModel_light
 import random
 import torch.nn as nn
 import pickle
+from evaluation import evaluate_recommendations,evaluate_train
+import os
 # from utility.parser import parse_args
 # args = parse_args()
 path="data/NETFLIX/raw"
@@ -87,7 +89,8 @@ def ensure_consistency_of_items_across_datasets():
     complete_item_list.sort()
     complete_user_list.sort()
     interaction_matrix= get_interaction_matrix(complete_item_list,complete_user_list,train_interaction_data)
-    return interaction_matrix, complete_item_list,complete_user_list
+    test_interaction_matrix= get_interaction_matrix(complete_item_list,complete_user_list,test_interaction_data)
+    return interaction_matrix,test_interaction_matrix, complete_item_list,complete_user_list
     
     # print(len(item_attribute_sheet))
     # print(len(items_in_sheet.union(train_test_items)), len(items_in_sheet), len(train_test_items), len(tmp))
@@ -127,6 +130,7 @@ def update_model_light(model:MFModel_light, loss, learning_rate):
     grads = torch.autograd.grad(
         outputs=loss, inputs= paras
     )
+    
     global time7
     time7=time.time()
     # print(grads[0])
@@ -188,57 +192,86 @@ def calculate_loss_light(model:MFModel_light, input_user_ids:list, input_items_i
     return loss
 
 
+def load_pretrained_model(model, model_path):
+    if os.path.exists(model_path):
+        print(f"Loading pre-trained model from {model_path}...")
+        with open(model_path, "rb") as f:
+            checkpoint = pickle.load(f)
+            model.user_hiddens = checkpoint["user"]
+            model.item_hiddens = checkpoint["item"]
+        print("Pre-trained model loaded successfully.")
+    else:
+        print(f"No pre-trained model found at {model_path}, starting training from scratch.")
+
+# training and model update functions...
+
 if __name__ == "__main__":
     hidden_dim = 8
-    total_epoch_number = 10
-    batch_size=256
-    lr=10
+    total_epoch_number = 1000
+    batch_size = 256
+    lr = 10
+    os.chdir("/home/linfengyang/mmfedrec")
+    model_path = "trained_models/onlyinteract_epoch1000-lr10-hidden8.pkl"
 
-    model_path = "trained_models/epoch1000-lr10-hidden8.pkl"
-
-    interaction_matrix, complete_item_list, complete_user_list = ensure_consistency_of_items_across_datasets()
+    interaction_matrix, test_interaction_matrix, complete_item_list, complete_user_list = ensure_consistency_of_items_across_datasets()
     model = MFModel_light(complete_user_list, complete_item_list, hidden_dim).to(device)
     N = len(complete_user_list)
     M = len(complete_item_list)
 
-    # load_model(model , "trained_models/epoch1000-lr10-hidden8.pkl")
-
-
-
-    #training process
-    
+    # Load the pre-trained model (if exists)
+    load_pretrained_model(model, model_path)
+    # demo_user = 0
+    # demo_item = 0
+    # Training process...
     for epoch in range(total_epoch_number):
-        #reset id pool
-        user_id_pool=[u for u in range(N)]
+        # Reset id pool
+        # user_id_pool = [u for u in range(N)]
+        # item_id_pool = [i for i in range(M)]
+        user_id_pool = torch.unique(interaction_matrix.coalesce().indices()[0, :]).numpy().tolist()
+
         item_id_pool = [i for i in range(M)]
-        time1=time.time()
-        while len(user_id_pool)>0:
-            input_user_ids=sample_a_batch_of_ids(batch_size,user_id_pool) 
-            # input_user_ids = [2,3,4,6,8,9]
-            input_items_ids=item_id_pool
+        time1 = time.time()
+       
 
-            time2=time.time()
-            loss=calculate_loss_light(model,input_user_ids, input_items_ids, "user",interaction_matrix)
-            time6=time.time()
-            update_model_light(model, loss, lr/M)
-            
-            if len(user_id_pool)==0:
-                log_info = "Epoch: {}-{} \t{}/{} \tLoss: {:.6f}".format(epoch,"user",N-len(user_id_pool) ,N, loss.item())
+        # 每训练10轮后打印
+        # if epoch % 10 == 0:
+        #     print(f"Epoch {epoch} 用户隐向量:", model.user_hiddens[demo_user][:5])
+        #     print(f"Epoch {epoch} 物品隐向量:", model.item_hiddens[demo_item][:5])
+        while len(user_id_pool) > 0:
+            input_user_ids = sample_a_batch_of_ids(batch_size, user_id_pool)
+            input_items_ids = item_id_pool
+
+            loss = calculate_loss_light(model, input_user_ids, input_items_ids, "user", interaction_matrix)
+            update_model_light(model, loss, lr / M)
+
+            if len(user_id_pool) == 0:
+                log_info = "Epoch: {}-{} \t{}/{} \tLoss: {:.6f}".format(epoch, "user", N - len(user_id_pool), N, loss.item())
                 print(log_info)
-            # print("total time:{:.3f} b:{:.3f} c:{:.3f} d:{:.3f} e:{:.3f} f:{:.3f} g:{:.3f}".format(time2 -time1, time3-time2, time4-time3, time5-time4, time6-time5, time7-time6,time8-time7))
-        # print("hello")
 
-        user_id_pool=[u for u in range(N)]
-        item_id_pool = [i for i in range(M)]
-        while len(item_id_pool)>0:
-            input_user_ids=user_id_pool
-            input_items_ids=sample_a_batch_of_ids(batch_size,item_id_pool)
-            loss=calculate_loss_light(model,input_user_ids, input_items_ids, "item", interaction_matrix)
-            update_model_light(model, loss, lr/N)
-            if len(item_id_pool)==0:
-                log_info = "Epoch: {}-{} \t{}/{} \tLoss: {:.6f}".format(epoch,"item",M-len(item_id_pool) ,M, loss.item())
+        # Item-wise updates
+        # user_id_pool = [u for u in range(N)]
+        # item_id_pool = [i for i in range(M)]
+        user_id_pool = [u for u in range(N)]
+        item_id_pool = torch.unique(interaction_matrix.coalesce().indices()[1, :]).numpy().tolist()
+        while len(item_id_pool) > 0:
+            input_user_ids = user_id_pool
+            input_items_ids = sample_a_batch_of_ids(batch_size, item_id_pool)
+            loss = calculate_loss_light(model, input_user_ids, input_items_ids, "item", interaction_matrix)
+            update_model_light(model, loss, lr / N)
+            if len(item_id_pool) == 0:
+                log_info = "Epoch: {}-{} \t{}/{} \tLoss: {:.6f}".format(epoch, "item", M - len(item_id_pool), M, loss.item())
                 print(log_info)
-        
 
+        # Evaluate on test data
+        # print(complete_user_list)
+        metric = evaluate_recommendations(model, test_interaction_matrix, interaction_matrix,range(M),k=10, batch_size=64)
+        print(f"test result:{metric}")
+        metric = evaluate_train(model, interaction_matrix,range(M),k=10, batch_size=64)
+        print(f"train result:{metric}")
+
+    # Save the model
+    model_dir = os.path.dirname(model_path)
+    if not os.path.exists(model_dir):
+        os.makedirs(model_dir)
     with open(model_path, "wb") as f:
-        pickle.dump({"user":model.user_hiddens, "item": model.item_hiddens}, f)
+        pickle.dump({"user": model.user_hiddens, "item": model.item_hiddens}, f)
